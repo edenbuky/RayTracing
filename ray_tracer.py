@@ -67,6 +67,8 @@ def main():
 
     # TODO: Implement the ray tracer
 
+    direction, right_vector, up_vector, screen_height, center_screen = initialize_screen_parameters
+
     # For each pixel:
     # 1.Shoot a ray through each pixel in the image:
     #   1.1 Discover the location of the pixel on the camera’s screen (using camera parameters)
@@ -113,21 +115,3 @@ def initialize_screen_parameters(camera, image_width, image_height):
 
     return direction, right_vector, up_vector, screen_height, center_screen
 
-def compute_ray(camera, pixel_x, pixel_y, image_width, image_height, direction, right_vector, up_vector, screen_height, center_screen):
-    # Pixel size
-    pixel_width = camera.screen_width / image_width
-    pixel_height = screen_height / image_height
-
-    # Pixel offsets (adjusted for bottom-right (0,0) origin)
-    offset_x = (pixel_x - image_width / 2) * pixel_width
-    offset_y = (pixel_y - image_height / 2) * pixel_height
-
-    # Pixel position on screen
-    pixel_position = center_screen + right_vector * offset_x - up_vector * offset_y
-
-    # Ray direction
-    ray_direction = pixel_position - np.array(camera.position)
-    ray_direction /= np.linalg.norm(ray_direction)  # Normalize
-
-    # Return ray (origin and direction)
-    return np.array(camera.position), ray_direction
