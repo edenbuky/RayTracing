@@ -66,8 +66,7 @@ def main():
     camera, scene_settings, objects = parse_scene_file(args.scene_file)
 
     # TODO: Implement the ray tracer
-
-    direction, right_vector, up_vector, screen_height, center_screen = initialize_screen_parameters
+    initialize_screen_parameters(camera, args.width, args.height)
 
     # For each pixel:
     # 1.Shoot a ray through each pixel in the image:
