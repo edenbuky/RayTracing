@@ -68,24 +68,25 @@ def main():
     # TODO: Implement the ray tracer
     direction, right_vector, up_vector, screen_height, center_screen = initialize_screen_parameters(camera, args.width, args.height)
 
-    # For each pixel:
-    # 1.Shoot a ray through each pixel in the image:
-    #   1.1 Discover the location of the pixel on the camera’s screen (using camera parameters)
-    #   1.2 Construct a ray from the camera through that pixel.
-    # 2. Check the intersection of the ray with all surfaces in the scene.
-    # 3. Find the nearest intersection of the ray. This is the surface that will be seen in the image.
-    # 4. Compute the color of the surface:
-    #   4.1. Go over each light in the scene.
-    #   4.2. Add the value it induces on the surface.
-    # 5. Find out whether the light hits the surface or not:
-    #   5.1. Shoot rays from the light towards the surface
-    #   5.2. Find whether the ray intersects any other surfaces before the required surface - if so, the surface is occluded from the light and the light does not affect it (or partially affects it because of the shadow intensity parameter).
-    # 6. Produce soft shadows, as explained below:
-    #   6.1. Shoot several rays from the proximity of the light to the surface.
-    #   6.2. Find out how many of them hit the required surface.
+   # Loop over each pixel
+    for i in range(args.height):
+        for j in range(args.width):
+            # Get the pixel position
+            pixel_position = pixels[i, j]
 
-    # Dummy result
-    image_array = np.zeros((500, 500, 3))
+            # Construct a ray from the camera through that pixel
+            ray = compute_ray(np.array(camera.position), pixel_position)
+
+            # Check the intersection of the ray with all surfaces in the scene
+            obj, intersection_point, normal = get_ray_first_collision(ray, objects)
+
+            # Compute the color of the surface
+            lights = [o for o in objects if isinstance(o, Light)]
+            color = calculate_shading(intersection_point, normal, obj.material, lights,
+                                      camera.position, scene_settings.background_color, objects)
+
+            # Assign the calculated color to the pixel
+            image_array[i, j] = color
 
     # Save the output image
     save_image(image_array)
@@ -123,8 +124,8 @@ def compute_screen_pixels(direction,camera,image_height,image_width,screen_heigh
     normilzed_right_vector = np.linalg.norm(right_vector)
     up_edge = center_screen+normilzed_up_vector*screen_height/2
     down_edge = center_screen-normilzed_up_vector*screen_height/2
-    right_edge = center_screen+normilzed_right_vector*screen_width/2
-    left_edge = center_screen-normilzed_right_vector*screen_width/2
+    right_edge = center_screen+normilzed_right_vector* camera.screen_width/2
+    left_edge = center_screen-normilzed_right_vector* camera.screen_width/2
 
     upper_left_point = up_edge+left_edge-center_screen
     upper_right_point = up_edge+right_edge-center_screen
@@ -166,6 +167,8 @@ def compute_ray_InfinitePlane_intersection(ray,plane):
     denominator = np.dot(plane_normal, ray_direction)
     if np.isclose(denominator, 0):
         return None , None, None
+    plane_d = np.dot(plane_normal, plane_point)
+    t = (plane_d - np.dot(plane_normal, ray_origin)) / denominator
     if t < 0:
         # The intersection point is behind the ray origin
         return None , None, None
@@ -178,6 +181,8 @@ def compute_ray_InfinitePlane_intersection(ray,plane_point,plane_normal):
     denominator = np.dot(plane_normal, ray_direction)
     if np.isclose(denominator, 0):
         return None , None, None
+    plane_d = np.dot(plane_normal, plane_point)
+    t = (plane_d - np.dot(plane_normal, ray_origin)) / denominator
     if t < 0:
         # The intersection point is behind the ray origin
         return None , None, None
@@ -192,7 +197,7 @@ def compute_ray_cube_intersection(ray,cube):
     p = scale/2
     intersenction_dis = -1
     normal = None
-    plane_point = cube.position+[scale/2,0,0]
+    plane_point = cube.position+[cube.scale/2,0,0]
     plane_normal = [1,0,0]
     cur_intersection = compute_ray_InfinitePlane_intersection(ray,plane_point,plane_normal)
     if cur_intersection!=None and cur_intersection[1]>=y-p and cur_intersection[1]<=y+p and cur_intersection[2]>=z-p and cur_intersection[2]<=z+p:
@@ -202,7 +207,7 @@ def compute_ray_cube_intersection(ray,cube):
             normal = [1,0,0]
     
     
-    plane_point = cube.position+[-scale/2,0,0]
+    plane_point = cube.position+[-cube.scale/2,0,0]
     plane_normal = [11,0,0]
     cur_intersection = compute_ray_InfinitePlane_intersection(ray,plane_point,plane_normal)
     if cur_intersection!=None and cur_intersection[1]>=y-p and cur_intersection[1]<=y+p and cur_intersection[2]>=z-p and cur_intersection[2]<=z+p:
@@ -305,7 +310,7 @@ def get_ray_first_collision(ray, objects):
     dis = -1
     normal = None
     for i in range(len(objects)):
-        if isinstance(objects[i], Cube) or isinstance(objects[i], Cube) or isinstance(objects[i], Cube)or isinstance(objects[i], Light):
+        if isinstance(objects[i], Cube) or isinstance(objects[i], Sphere) or isinstance(objects[i], InfinitePlane) or isinstance(objects[i], Light):
             cur_inter, cur_dis, cur_normal = compute_ray_object_intersection(ray,objects[i])
             if cur_inter != None and (obj==None or cur_dis<dis):
                 obj = objects[i]
@@ -315,4 +320,92 @@ def get_ray_first_collision(ray, objects):
 
     return obj, inter, normal
 
+
+def calculate_shading(intersection_point, normal, obj, lights, camera_position, background_color, scene_objects, recursion_depth=3):
+    color = np.zeros(3)
+
+    # Case 1: If the object is a light, return its color directly
+    if isinstance(obj, Light):
+        return obj.color
+
+    # Check if normal is None (background or light case)
+    if normal is None:
+        if isinstance(obj, Light):
+            return obj.color
+        else:
+            return background_color
+
+    # Access the material of the object
+    material = obj.material
+
+    # Iterate over all lights in the scene
+    for light in lights:
+        light_direction = light.position - intersection_point
+        light_distance = np.linalg.norm(light_direction)
+        light_direction /= light_distance
+
+        # Shadow check
+        if is_light_blocked(intersection_point, light_direction, scene_objects):
+            color += background_color * light.shadow_intensity
+            continue
+
+        # Calculate diffuse component
+        diffuse_intensity = max(0, np.dot(normal, light_direction))
+        diffuse_color = material.diffuse_color * light.color * diffuse_intensity
+
+        # Calculate specular component
+        view_direction = camera_position - intersection_point
+        view_direction /= np.linalg.norm(view_direction)
+        reflection_direction = 2 * np.dot(normal, light_direction) * normal - light_direction
+        reflection_direction /= np.linalg.norm(reflection_direction)
+        specular_intensity = max(0, np.dot(view_direction, reflection_direction)) ** material.shininess
+        specular_color = material.specular_color * light.color * specular_intensity * light.specular_intensity
+
+        # Handle soft shadows
+        if light.radius > 0:
+            soft_shadow_factor = compute_soft_shadows(intersection_point, light, scene_objects)
+            light_contribution = (diffuse_color + specular_color) / (light_distance ** 2) * soft_shadow_factor
+        else:
+            light_contribution = (diffuse_color + specular_color) / (light_distance ** 2)
+
+        color += (1 - material.transparency) * light_contribution
+
+    # Reflection handling
+    if recursion_depth > 0 and material.reflection_coefficient > 0:
+        reflection_direction = view_direction - 2 * np.dot(view_direction, normal) * normal
+        reflection_direction /= np.linalg.norm(reflection_direction)
+        reflection_ray = (intersection_point + 1e-4 * reflection_direction, reflection_direction)
+
+        reflected_obj, reflected_intersection, reflected_normal = get_ray_first_collision(reflection_ray, scene_objects)
+        if reflected_obj is not None:
+            reflection_color = calculate_shading(reflected_intersection, reflected_normal, reflected_obj, lights,
+                                                 camera_position, background_color, scene_objects,
+                                                 recursion_depth - 1)
+            color = (1 - material.reflection_coefficient) * color + material.reflection_coefficient * reflection_color
+
+    # Add background transparency contribution
+    color += material.transparency * background_color
+
+    return np.clip(color, 0, 1)
+
+def is_light_blocked(origin, direction, scene_objects):
+    obj, inter, normal = get_ray_first_collision((origin, direction), scene_objects)
+    return inter is not None
+
+def compute_soft_shadows(intersection_point, light, scene_objects):
+    num_rays = 10
+    hit_count = 0
+
+    for _ in range(num_rays):
+        random_offset = light.radius * (np.random.rand(3) - 0.5)
+        random_light_position = light.position + random_offset
+
+        shadow_ray_direction = random_light_position - intersection_point
+        shadow_ray_distance = np.linalg.norm(shadow_ray_direction)
+        shadow_ray_direction /= shadow_ray_distance
+
+        if not is_light_blocked(intersection_point, shadow_ray_direction, scene_objects):
+            hit_count += 1
+
+    return hit_count / num_rays
 
