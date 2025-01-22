@@ -1,6 +1,7 @@
 import argparse
 from PIL import Image
 import numpy as np
+from typing import Tuple, Optional, List, Union
 
 from camera import Camera
 from light import Light
@@ -54,56 +55,15 @@ def save_image(image_array):
     image.save("scenes/Spheres.png")
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Python Ray Tracer')
-    parser.add_argument('scene_file', type=str, help='Path to the scene file')
-    parser.add_argument('output_image', type=str, help='Name of the output image file')
-    parser.add_argument('--width', type=int, default=500, help='Image width')
-    parser.add_argument('--height', type=int, default=500, help='Image height')
-    args = parser.parse_args()
-
-    # Parse the scene file
-    camera, scene_settings, objects = parse_scene_file(args.scene_file)
-
-    # TODO: Implement the ray tracer
-    direction, right_vector, up_vector, screen_height, center_screen = initialize_screen_parameters(camera, args.width, args.height)
-
-   # Loop over each pixel
-    for i in range(args.height):
-        for j in range(args.width):
-            # Get the pixel position
-            pixel_position = pixels[i, j]
-
-            # Construct a ray from the camera through that pixel
-            ray = compute_ray(np.array(camera.position), pixel_position)
-
-            # Check the intersection of the ray with all surfaces in the scene
-            obj, intersection_point, normal = get_ray_first_collision(ray, objects)
-
-            # Compute the color of the surface
-            lights = [o for o in objects if isinstance(o, Light)]
-            color = calculate_shading(intersection_point, normal, obj.material, lights,
-                                      camera.position, scene_settings.background_color, objects)
-
-            # Assign the calculated color to the pixel
-            image_array[i, j] = color
-
-    # Save the output image
-    save_image(image_array)
-
-
-if __name__ == '__main__':
-    main()
-
 ####################################################
 
 def initialize_screen_parameters(camera, image_width, image_height):
     # Calculate camera direction
-    direction = np.array(camera.look_at) - np.array(camera.position)
+    direction = camera.look_at - camera.position
     direction /= np.linalg.norm(direction)  # Normalize
 
     # Compute right and up vectors
-    up_vector = np.array(camera.up_vector)
+    up_vector = camera.up_vector
     right_vector = np.cross(direction, up_vector)
     right_vector /= np.linalg.norm(right_vector)
     up_vector = np.cross(right_vector, direction)
@@ -115,194 +75,232 @@ def initialize_screen_parameters(camera, image_width, image_height):
 
     return direction, right_vector, up_vector, screen_height, center_screen
 
+def compute_screen_pixels(direction, camera, image_height, image_width, screen_height, right_vector, up_vector,
+                          center_screen):
+    # Initialize the pixels array for storing pixel positions or colors
+    pixels = np.zeros((image_height, image_width, 3))  # Assuming we're storing RGB values
 
+    # Calculate the screen edges based on the camera's view parameters
+    up_edge = center_screen + up_vector * screen_height / 2
+    down_edge = center_screen - up_vector * screen_height / 2
+    right_edge = center_screen + right_vector * camera.screen_width / 2
+    left_edge = center_screen - right_vector * camera.screen_width / 2
 
-def compute_screen_pixels(direction,camera,image_height,image_width,screen_height,right_vector,up_vector,center_screen):
+    # Calculate the corner points of the screen
+    upper_left_point = up_edge + left_edge - center_screen
+    horizontal_step = (right_edge - left_edge) / image_width  # Keep as is
+    vertical_step = -(up_edge - down_edge) / image_height  # Negative step for proper vertical orientation
 
-    pixels = np.zeros((image_height,image_width,len(center_screen)))
-    normilzed_up_vector = np.linalg.norm(up_vector)
-    normilzed_right_vector = np.linalg.norm(right_vector)
-    up_edge = center_screen+normilzed_up_vector*screen_height/2
-    down_edge = center_screen-normilzed_up_vector*screen_height/2
-    right_edge = center_screen+normilzed_right_vector* camera.screen_width/2
-    left_edge = center_screen-normilzed_right_vector* camera.screen_width/2
+    # Loop over the image dimensions
+    for i in range(image_height):
+        for j in range(image_width):
+            # Calculate the pixel's position on the screen
+            pixel_position = upper_left_point + j * horizontal_step + i * vertical_step
+            pixels[i, j] = pixel_position
 
-    upper_left_point = up_edge+left_edge-center_screen
-    upper_right_point = up_edge+right_edge-center_screen
-    lower_left_point = down_edge+left_edge-center_screen
-    lower_right_point = down_edge+right_edge-center_screen
+    # Return all relevant parameters
+    return pixels
 
-    point = upper_left_point
-
-    for i in range(len(pixels)):
-        for j in range(len(pixels[i])):
-            pixels[i][j]=point
-            point += (upper_right_point-upper_left_point)/image_width
-        point += upper_left_point-upper_right_point
-        point += (lower_left_point-upper_left_point)/image_height
-    
-    return pixels, normilzed_up_vector, normilzed_right_vector, up_edge, down_edge, right_edge, left_edge, upper_left_point, upper_right_point, lower_left_point, lower_right_point
-
-def compute_ray(point1,point2):
-    ray = np.zeros((2,len(point1)))
+def compute_ray(point1, point2):
+    ray = np.zeros((2, len(point1)))
     ray[0] = point1
-    ray[1] = (point2-point1)/np.linalg.norm(point2-point1)
+    ray[1] = point2 - point1
+    ray[1]  /= np.linalg.norm(ray[1])
     return ray
 
-def compute_ray_object_intersection(ray,ob):
+
+def compute_ray_object_intersection(ray, obj):
     if isinstance(obj, Cube):
-        return compute_ray_cube_intersection(ray,obj)
+        result = compute_ray_cube_intersection(ray, obj)
+        #print(f"Cube Intersection: {result}")
+        return result
     if isinstance(obj, Sphere):
-        return compute_ray_sphere_intersection(ray,obj)
-    if isinstance(obj, Light):
-        return compute_ray_light_intersection(ray,obj)
+        result = compute_ray_Sphere_intersection(ray, obj)
+        #print(f"Sphere Intersection: {result}")
+        return result
     if isinstance(obj, InfinitePlane):
-        return compute_ray_InfinitePlane_intersection(ray,obj)
+        result = compute_ray_InfinitePlane_intersection(ray, obj)
+        #print(f"Plane Intersection: {result}")
+        return result
 
-def compute_ray_InfinitePlane_intersection(ray,plane):
-    ray_direction = ray[1]
+def compute_ray_InfinitePlane_intersection(ray, plane):
     ray_origin = ray[0]
-    plane_point = plane.offset*plane.normal
-    plane_normal = plane.normal / np.linalg.norm(plane.normal)
-    denominator = np.dot(plane_normal, ray_direction)
+    ray_direction = ray[1]
+
+    # Calculate the denominator of the intersection equation
+    denominator = np.dot(ray_direction, plane.normal)
+
+    # If the denominator is close to 0, the ray is parallel to the plane
     if np.isclose(denominator, 0):
-        return None , None, None
-    plane_d = np.dot(plane_normal, plane_point)
-    t = (plane_d - np.dot(plane_normal, ray_origin)) / denominator
+        return None, None, None
+
+    # Calculate the distance t to the intersection point
+    t = np.dot(plane.plane_point - ray_origin, plane.normal) / denominator
+
+    # If t < 0, the intersection is behind the ray's origin
     if t < 0:
-        # The intersection point is behind the ray origin
-        return None , None, None
+        return None, None, None
+
+    # Calculate the intersection point
     intersection_point = ray_origin + t * ray_direction
-    return intersection_point, np.linalg.norm(intersection_point-ray[0])
 
-def compute_ray_InfinitePlane_intersection(ray,plane_point,plane_normal):
-    ray_direction = ray[1]
+    return intersection_point, t, plane.normal
+
+# def compute_ray_cube_intersection(ray, cube, epsilon=1e-15):
+#     # Calculate the bounds of the cube
+#     half_scale = cube.scale / 2
+#
+#     # Calculate the bounds of the cube
+#     bounds_min = cube.position - half_scale
+#     bounds_max = cube.position + half_scale
+#
+#     # Initialize t_min and t_max
+#     t_min = -float('inf')  # Start with the lowest possible value
+#     t_max = float('inf')   # Start with the highest possible value
+#
+#     # Check intersection for each axis
+#     for i in range(3):
+#         if abs(ray[1][i]) < epsilon:  # Ray is parallel to the plane
+#             if ray[0][i] < bounds_min[i] or ray[0][i] > bounds_max[i]:
+#                 return None, None, None  # Ray misses the box
+#         else:
+#             # Calculate intersection times for the two planes of the slab
+#             t1 = (bounds_min[i] - ray[0][i]) / ray[1][i]
+#             t2 = (bounds_max[i] - ray[0][i]) / ray[1][i]
+#
+#             # Ensure t1 is the entry point and t2 is the exit point
+#             t_entry = min(t1, t2)
+#             t_exit = max(t1, t2)
+#
+#             # Update the overall t_min and t_max
+#             t_min = max(t_min, t_entry)
+#             t_max = min(t_max, t_exit)
+#
+#             # If the intervals don't overlap, there is no intersection
+#             if t_min > t_max:
+#                 return None, None, None
+#
+#     # Compute the intersection point and normal
+#     intersection_point = ray[0] + t_min * ray[1]
+#
+#     # Compute the normal of the face hit
+#     normal = np.zeros(3)
+#     for i in range(3):
+#         if abs(intersection_point[i] - bounds_min[i]) < epsilon:
+#             normal[i] = -1
+#         elif abs(intersection_point[i] - bounds_max[i]) < epsilon:
+#             normal[i] = 1
+#
+#     # Normalize the normal to ensure stability
+#     normal /= np.linalg.norm(normal)
+#     return intersection_point, t_min, normal
+
+
+
+def compute_ray_cube_intersection(ray: List[np.ndarray], cube: 'Cube') -> Tuple[
+    Optional[np.ndarray], Optional[float], Optional[np.ndarray]]:
+
+    ray_origin, ray_direction = ray
+
+    # Ensure ray direction is normalized
+    ray_direction = ray_direction / np.linalg.norm(ray_direction)
+
+    # Calculate cube bounds
+    half_scale = cube.scale / 2
+    min_bound = cube.position - half_scale
+    max_bound = cube.position + half_scale
+
+    # Handle division by zero in ray direction components
+    dir_inv = np.where(
+        np.abs(ray_direction) < 1e-10,
+        np.inf,
+        1.0 / ray_direction
+    )
+
+    # Calculate intersection with all slabs
+    t1 = (min_bound - ray_origin) * dir_inv
+    t2 = (max_bound - ray_origin) * dir_inv
+
+    # Get entry and exit points
+    t_min = np.minimum(t1, t2)
+    t_max = np.maximum(t1, t2)
+
+    # Find the largest entry and smallest exit
+    t_near = np.max(t_min)
+    t_far = np.min(t_max)
+
+    # Check if there's a valid intersection
+    if t_near > t_far or t_far < 0:
+        return None, None, None
+
+    # If t_near is negative, ray starts inside cube
+    t_hit = t_near if t_near >= 0 else t_far
+
+    # Calculate intersection point
+    intersection_point = ray_origin + ray_direction * t_hit
+
+    # Calculate normal (using the face that was hit)
+    eps = 1e-10  # Small epsilon for numerical stability
+    normal = np.zeros(3)
+
+    # Find which face was hit by comparing intersection point with bounds
+    for i in range(3):
+        if abs(intersection_point[i] - min_bound[i]) < eps:
+            normal[i] = -1
+            break
+        elif abs(intersection_point[i] - max_bound[i]) < eps:
+            normal[i] = 1
+            break
+
+    # Ensure normal is normalized
+    normal = normal / np.linalg.norm(normal)
+
+    return intersection_point, t_hit, normal
+
+
+def compute_ray_Sphere_intersection(ray, sphere, epsilon=1e-5):
     ray_origin = ray[0]
-    denominator = np.dot(plane_normal, ray_direction)
-    if np.isclose(denominator, 0):
-        return None , None, None
-    plane_d = np.dot(plane_normal, plane_point)
-    t = (plane_d - np.dot(plane_normal, ray_origin)) / denominator
-    if t < 0:
-        # The intersection point is behind the ray origin
-        return None , None, None
-    intersection_point = ray_origin + t * ray_direction
-    return intersection_point , np.linalg.norm(intersection_point-ray[0]), None
-
-def compute_ray_cube_intersection(ray,cube):
-    intersection = None
-    x = cube.position[0]
-    y = cube.position[1]
-    z = cube.position[2]
-    p = scale/2
-    intersenction_dis = -1
-    normal = None
-    plane_point = cube.position+[cube.scale/2,0,0]
-    plane_normal = [1,0,0]
-    cur_intersection = compute_ray_InfinitePlane_intersection(ray,plane_point,plane_normal)
-    if cur_intersection!=None and cur_intersection[1]>=y-p and cur_intersection[1]<=y+p and cur_intersection[2]>=z-p and cur_intersection[2]<=z+p:
-        if intersection == None or np.linalg.norm(cur_intersection-ray[0])<intersenction_dis:
-            intersection = cur_intersection
-            intersenction_dis = np.linalg.norm(cur_intersection-ray[0])
-            normal = [1,0,0]
-    
-    
-    plane_point = cube.position+[-cube.scale/2,0,0]
-    plane_normal = [11,0,0]
-    cur_intersection = compute_ray_InfinitePlane_intersection(ray,plane_point,plane_normal)
-    if cur_intersection!=None and cur_intersection[1]>=y-p and cur_intersection[1]<=y+p and cur_intersection[2]>=z-p and cur_intersection[2]<=z+p:
-        if intersection == None or np.linalg.norm(cur_intersection-ray[0])<intersenction_dis:
-            intersection = cur_intersection
-            intersenction_dis = np.linalg.norm(cur_intersection-ray[0])
-            normal = [-1,0,0]
-
-    plane_point = cube.position+[0,p,0]
-    plane_normal = [0,1,0]
-    cur_intersection = compute_ray_InfinitePlane_intersection(ray,plane_point,plane_normal)
-    if cur_intersection!=None and cur_intersection[0]>=x-p and cur_intersection[0]<=x+p and cur_intersection[2]>=z-p and cur_intersection[2]<=z+p:
-        if intersection == None or np.linalg.norm(cur_intersection-ray[0])<intersenction_dis:
-            intersection = cur_intersection
-            intersenction_dis = np.linalg.norm(cur_intersection-ray[0])
-            normal = [0,1,0]
-    
-    plane_point = cube.position+[0,-p,0]
-    plane_normal = [0,-1,0]
-    cur_intersection = compute_ray_InfinitePlane_intersection(ray,plane_point,plane_normal)
-    if cur_intersection!=None and cur_intersection[0]>=x-p and cur_intersection[0]<=x+p and cur_intersection[2]>=z-p and cur_intersection[2]<=z+p:
-        if intersection == None or np.linalg.norm(cur_intersection-ray[0])<intersenction_dis:
-            intersection = cur_intersection
-            intersenction_dis = np.linalg.norm(cur_intersection-ray[0])
-            normal = [0,-1,0]
-    
-    plane_point = cube.position+[0,0,p]
-    plane_normal = [0,0,1]
-    cur_intersection = compute_ray_InfinitePlane_intersection(ray,plane_point,plane_normal)
-    if cur_intersection!=None and cur_intersection[0]>=x-p and cur_intersection[0]<=x+p and cur_intersection[1]>=y-p and cur_intersection[1]<=y+p:
-        if intersection == None or np.linalg.norm(cur_intersection-ray[0])<intersenction_dis:
-            intersection = cur_intersection
-            intersenction_dis = np.linalg.norm(cur_intersection-ray[0])
-            normal = [0,0,1]
-    
-    plane_point = cube.position+[0,0,-p]
-    plane_normal = [0,0,-1]
-    cur_intersection = compute_ray_InfinitePlane_intersection(ray,plane_point,plane_normal)
-    if cur_intersection!=None and cur_intersection[0]>=x-p and cur_intersection[0]<=x+p and cur_intersection[1]>=y-p and cur_intersection[1]<=y+p:
-        if intersection == None or np.linalg.norm(cur_intersection-ray[0])<intersenction_dis:
-            intersection = cur_intersection
-            intersenction_dis = np.linalg.norm(cur_intersection-ray[0])
-            normal = [0,0,-1]
-    
-    return intersection, intersenction_dis, normal
-
-def compute_ray_Sphere_intersection(ray,sphere):
-    ray_origin = ray[0]
     ray_direction = ray[1]
-    sphere_center= sphere.position
+    sphere_center = sphere.position
     sphere_radius = sphere.radius
-    ray_direction = ray_direction / np.linalg.norm(ray_direction)  # Ensure direction is normalized
+
+    # Vector from the sphere center to the ray origin
     oc = ray_origin - sphere_center
 
-    a = np.dot(ray_direction, ray_direction)  # Should be 1 if normalized
-    b = 2 * np.dot(ray_direction, oc)
-    c = np.dot(oc, oc) - sphere_radius**2
+    # Coefficients of the quadratic equation
+    A = np.dot(ray_direction, ray_direction)  # Should be 1 if direction is normalized
+    B = 2.0 * np.dot(ray_direction, oc)
+    C = np.dot(oc, oc) - sphere_radius ** 2
 
-    discriminant = b**2 - 4 * a * c
+    # Discriminant
+    discriminant = B ** 2 - 4 * A * C
 
     if discriminant < 0:
         # No intersection
-        return None , None, None
-    
-    t1 = (-b - np.sqrt(discriminant)) / (2 * a)
-    t2 = (-b + np.sqrt(discriminant)) / (2 * a)
+        return None, None, None
 
-    if  np.linalg.norm(t1-ray[0])>np.linalg.norm(t2-ray[0]):
-        return t2 , np.linalg.norm(t2-ray[0]), None
-    return t1, np.linalg.norm(t1-ray[0]), None
+    # Compute the two roots of the quadratic equation
+    sqrt_discriminant = np.sqrt(discriminant)
+    t1 = (-B - sqrt_discriminant) / (2.0 * A)
+    t2 = (-B + sqrt_discriminant) / (2.0 * A)
 
-def compute_ray_lighy_intersection(ray,sphere):
-    ray_origin = ray[0]
-    ray_direction = ray[1]
-    sphere_center= sphere.position
-    sphere_radius = sphere.radius
-    ray_direction = ray_direction / np.linalg.norm(ray_direction)  # Ensure direction is normalized
-    oc = ray_origin - sphere_center
+    # Choose the closest positive t
+    if t1 > epsilon:
+        t = t1
+    elif t2 > epsilon:
+        t = t2
+    else:
+        # Both intersections are behind the ray origin
+        return None, None, None
 
-    a = np.dot(ray_direction, ray_direction)  # Should be 1 if normalized
-    b = 2 * np.dot(ray_direction, oc)
-    c = np.dot(oc, oc) - sphere_radius**2
+    # Compute the intersection point
+    intersection_point = ray_origin + t * ray_direction
 
-    discriminant = b**2 - 4 * a * c
+    # Compute the normal at the intersection point
+    normal = (intersection_point - sphere_center) / sphere_radius  # Normalize the normal
+    normal /= np.linalg.norm(normal)
+    return intersection_point, t, normal
 
-    if discriminant < 0:
-        # No intersection
-        return None , None, None
-    
-    t1 = (-b - np.sqrt(discriminant)) / (2 * a)
-    t2 = (-b + np.sqrt(discriminant)) / (2 * a)
-
-    if  np.linalg.norm(t1-ray[0])>np.linalg.norm(t2-ray[0]):
-        return t2 , np.linalg.norm(t2-ray[0]), None
-    return t1, np.linalg.norm(t1-ray[0]), None
 
 def get_ray_first_collision(ray, objects):
     obj = None
@@ -310,102 +308,284 @@ def get_ray_first_collision(ray, objects):
     dis = -1
     normal = None
     for i in range(len(objects)):
-        if isinstance(objects[i], Cube) or isinstance(objects[i], Sphere) or isinstance(objects[i], InfinitePlane) or isinstance(objects[i], Light):
-            cur_inter, cur_dis, cur_normal = compute_ray_object_intersection(ray,objects[i])
-            if cur_inter != None and (obj==None or cur_dis<dis):
+        if isinstance(objects[i], Cube) or isinstance(objects[i], Sphere) or isinstance(objects[i], InfinitePlane):
+            cur_inter, cur_dis, cur_normal = compute_ray_object_intersection(ray, objects[i])
+            if cur_inter is not None and (obj is None or cur_dis < dis):
+                # if isinstance(objects[i], Sphere):
+                #    print("Sphere")
                 obj = objects[i]
                 inter = cur_inter
+                dis = cur_dis
                 normal = cur_normal
-        ##################    Take care of light ######################################
 
     return obj, inter, normal
 
 
-def calculate_shading(intersection_point, normal, obj, lights, camera_position, background_color, scene_objects, recursion_depth=3):
-    color = np.zeros(3)
+# def soft_shadows(light, intersection_point, objects, shadow_ray, intersected_obj, sh_rays, epsilon=1e-15):
+#     N = int(sh_rays)  # Number of shadow rays (total rays: N^2)
+#     total_rays = N * N
+#
+#     # Calculate the direction of the main light ray
+#     light_direction = shadow_ray[1]
+#     light_direction /= np.linalg.norm(light_direction)
+#
+#     # Compute perpendicular vectors to the light direction
+#     up_candidate = np.array([0, 1, 0]) if not np.allclose(light_direction, [0, 1, 0]) else np.array([1, 0, 0])
+#     right_vector = np.cross(light_direction, up_candidate)
+#     right_vector /= np.linalg.norm(right_vector)
+#     up_vector = np.cross(right_vector, light_direction)
+#
+#     # Calculate the size of each grid cell
+#     cell_size = (2 * light.radius) / N  # Size of each grid cell (full radius)
+#     rays_hit = 0
+#
+#     for i in range(N):
+#         for j in range(N):
+#             # Define the current grid cell boundaries
+#             cell_min_x = -light.radius + i * cell_size
+#             cell_min_y = -light.radius + j * cell_size
+#             cell_max_x = cell_min_x + cell_size
+#             cell_max_y = cell_min_y + cell_size
+#
+#             # Select a random point within the current grid cell
+#             random_x = np.random.uniform(cell_min_x, cell_max_x)
+#             random_y = np.random.uniform(cell_min_y, cell_max_y)
+#             random_offset = random_x * right_vector + random_y * up_vector
+#
+#             # Compute the sample point on the light
+#             light_sample_point = light.position + random_offset
+#
+#             # Create a ray from the sample point on the light to the intersection point
+#             sample_ray = compute_ray(light_sample_point, intersection_point)
+#
+#             # Check for occlusion
+#             blocking_obj, blocking_point, _ = get_ray_first_collision(sample_ray, objects)
+#             if blocking_obj is None or (
+#                 blocking_obj is intersected_obj and np.linalg.norm(blocking_point - intersection_point) < epsilon
+#             ):
+#                 rays_hit += 1
+#
+#     # Compute the final light intensity
+#     light_intensity = (1 - light.shadow_intensity) + light.shadow_intensity * (rays_hit / total_rays)
+#     return light_intensity
+def soft_shadows(light, intersection_point, objects, shadow_ray, intersected_obj, sh_rays, epsilon=1e-10):
+    N = int(sh_rays)   # Number of shadow rays (N^2 total rays)
+    total_rays = N * N
+    # Define the light's perpendicular plane
+    light_direction = shadow_ray[1]  # Use the provided normalized direction
+    light_direction /= np.linalg.norm(light_direction)
 
-    # Case 1: If the object is a light, return its color directly
-    if isinstance(obj, Light):
-        return obj.color
+    # Calculate right_vector and up_vector
+    up_candidate = np.array([0, 1, 0]) if not np.allclose(light_direction, [0, 1, 0]) else np.array([1, 0, 0])
+    right_vector = np.cross(light_direction, up_candidate)
+    right_vector /= np.linalg.norm(right_vector)
+    up_vector = np.cross(right_vector, light_direction)
 
-    # Check if normal is None (background or light case)
-    if normal is None:
-        if isinstance(obj, Light):
-            return obj.color
-        else:
-            return background_color
+    # Define the rectangle grid around the light
+    half_radius = light.radius / 2
+    cell_size = 2 * half_radius / N  # Precompute the size of each cell
+    offsets = np.linspace(-half_radius, half_radius, N)  # Grid offsets
 
-    # Access the material of the object
-    material = obj.material
+    rays_hit = 0
 
-    # Iterate over all lights in the scene
+    # Loop over the grid
+    for i in range(N):
+        for j in range(N):
+            # Randomize the offset within the current cell
+            random_x = np.random.uniform(offsets[i], offsets[i] + cell_size)
+            random_y = np.random.uniform(offsets[j], offsets[j] + cell_size)
+            random_offset = random_x * right_vector + random_y * up_vector
+
+            # Compute the randomized sample point
+            light_sample_point = light.position + random_offset
+
+            # Cast a shadow ray
+            sample_ray = compute_ray(light_sample_point, intersection_point)
+
+            # Check for occlusion
+            blocking_obj, blocking_point, _ = get_ray_first_collision(sample_ray, objects)
+            if (
+                    blocking_obj is not None and
+                    (blocking_obj is not intersected_obj or
+                     np.linalg.norm(blocking_point - intersection_point) > epsilon)
+            ):
+                continue
+            rays_hit += 1
+
+    # Compute light intensity
+    light_intensity = (1 - light.shadow_intensity) + light.shadow_intensity * (rays_hit / total_rays)
+    return light_intensity
+
+
+def calculate_reflection(ray, hit_point, hit_normal, hit_object, objects, materials, lights, recursion_depth, scene_settings):
+    material = materials[hit_object.material_index - 1]
+    # If we have reached maximum depth or there is no reflection
+    if recursion_depth >= scene_settings.max_recursions or np.linalg.norm(material.reflection_color) == 0:
+        return calculate_shading(ray, hit_point, hit_normal, hit_object, material, lights, objects, scene_settings)
+    # Calculating the direction of the reflected beam
+    reflection_direction = ray[1] - 2 * np.dot(ray[1], hit_normal) * hit_normal
+    reflection_direction /= np.linalg.norm(reflection_direction)
+    reflection_ray = [hit_point + 1e-5 * reflection_direction, reflection_direction]
+    if isinstance(hit_object, Cube):
+        print(f"Hit_object {hit_object}: Normal: {hit_normal}, Intersection_point: {hit_point},Ray origin:{ray[0]}, Ray direction: {ray[1]}, Reflection direction: {reflection_direction} ")
+    # Collision check on new object
+    obj, next_point, next_normal = get_ray_first_collision(reflection_ray, objects)
+    # If there is no hit, return background color
+    if obj is None:
+        return scene_settings.background_color * material.reflection_color
+
+    # Recursive call for the next object
+    reflected_color = calculate_reflection(
+        reflection_ray, next_point, next_normal, obj, objects, materials, lights, recursion_depth + 1, scene_settings
+    )
+
+    # Calculate the shading color for the current object
+    shading_color = calculate_shading(ray, next_point, next_normal, obj, materials[obj.material_index - 1], lights, objects, scene_settings)
+
+    # Color combination
+    final_color = (shading_color + reflected_color) * material.reflection_color
+
+    max_component = max(1, np.max(final_color))
+    final_color = final_color / max_component
+
+    return np.clip(final_color,0,1)
+
+
+
+# def calculate_reflection_work(ray, intersection_point, normal, object, objects, materials, lights,
+#                          recursion_depth, scene_settings):
+#     material = materials[object.material_index - 1]
+#
+#     if recursion_depth >= scene_settings.max_recursions:
+#         return np.zeros(3)  # Stop recursion if max depth is reached
+#
+#
+#     # Calculate the direction of the reflection ray
+#     reflection_direction = ray[1] - 2 * np.dot(ray[1], normal) * normal
+#     reflection_direction /= np.linalg.norm(reflection_direction)  # Normalize the reflection direction
+#
+#     # Generate the reflection ray
+#     reflection_ray = [intersection_point + 1e-5 * reflection_direction, reflection_direction]
+#
+#     # Check for the next object the reflection ray hits
+#     next_obj, next_point, next_normal = get_ray_first_collision(reflection_ray, objects)
+#
+#     if next_obj is None:
+#         # If no object is hit, use the background color
+#         return scene_settings.background_color * material.reflection_color
+#     else:
+#         # Compute reflection recursively
+#         # Add shading from the new intersection
+#         shading_color = calculate_shading(ray, next_point, next_normal, next_obj, material, lights, objects,
+#                                           scene_settings)
+#         reflection_color = calculate_reflection(
+#             reflection_ray, next_point, next_normal, next_obj, objects, materials, lights,
+#             recursion_depth + 1, scene_settings
+#         )
+#
+#     # Multiply the reflection color by the material's reflection coefficient
+#     return reflection_color * material.reflection_color
+
+def calculate_shading(ray, intersection_point, normal, obj, obj_material, lights, objects, scene_settings):
+    # Initialize the final color as black
+    final_color = np.zeros(3)
+    view_direction = (ray[0] - intersection_point)
+    view_direction /= np.linalg.norm(view_direction)
+
     for light in lights:
-        light_direction = light.position - intersection_point
-        light_distance = np.linalg.norm(light_direction)
-        light_direction /= light_distance
+        # Compute the ray from the intersection point to the light
+        shadow_ray = compute_ray(intersection_point, light.position)
 
-        # Shadow check
-        if is_light_blocked(intersection_point, light_direction, scene_objects):
-            color += background_color * light.shadow_intensity
-            continue
+        # Calculate the light intensity at the intersection point using soft_shadows
+        light_intensity = soft_shadows(light, intersection_point, objects, shadow_ray, obj, scene_settings.root_number_shadow_rays)
 
-        # Calculate diffuse component
+        # Compute diffuse lighting
+        light_direction = shadow_ray[1]  # Normalized direction of the ray
         diffuse_intensity = max(0, np.dot(normal, light_direction))
-        diffuse_color = material.diffuse_color * light.color * diffuse_intensity
+        diffuse_color = diffuse_intensity * np.array(light.color) * np.array(obj_material.diffuse_color)
 
-        # Calculate specular component
-        view_direction = camera_position - intersection_point
-        view_direction /= np.linalg.norm(view_direction)
+        # Compute specular lighting
         reflection_direction = 2 * np.dot(normal, light_direction) * normal - light_direction
-        reflection_direction /= np.linalg.norm(reflection_direction)
-        specular_intensity = max(0, np.dot(view_direction, reflection_direction)) ** material.shininess
-        specular_color = material.specular_color * light.color * specular_intensity * light.specular_intensity
+        specular_intensity = max(0, np.dot(reflection_direction, view_direction)) ** obj_material.shininess
+        specular_color = specular_intensity * np.array(light.color) * np.array(obj_material.specular_color) * light.specular_intensity
 
-        # Handle soft shadows
-        if light.radius > 0:
-            soft_shadow_factor = compute_soft_shadows(intersection_point, light, scene_objects)
-            light_contribution = (diffuse_color + specular_color) / (light_distance ** 2) * soft_shadow_factor
-        else:
-            light_contribution = (diffuse_color + specular_color) / (light_distance ** 2)
+        # Accumulate the lighting contributions
+        final_color += light_intensity * (diffuse_color + specular_color)
 
-        color += (1 - material.transparency) * light_contribution
 
-    # Reflection handling
-    if recursion_depth > 0 and material.reflection_coefficient > 0:
-        reflection_direction = view_direction - 2 * np.dot(view_direction, normal) * normal
-        reflection_direction /= np.linalg.norm(reflection_direction)
-        reflection_ray = (intersection_point + 1e-4 * reflection_direction, reflection_direction)
+    # Ensure values are within range [0, 1]
+    return final_color
 
-        reflected_obj, reflected_intersection, reflected_normal = get_ray_first_collision(reflection_ray, scene_objects)
-        if reflected_obj is not None:
-            reflection_color = calculate_shading(reflected_intersection, reflected_normal, reflected_obj, lights,
-                                                 camera_position, background_color, scene_objects,
-                                                 recursion_depth - 1)
-            color = (1 - material.reflection_coefficient) * color + material.reflection_coefficient * reflection_color
+#############################################
 
-    # Add background transparency contribution
-    color += material.transparency * background_color
+def main():
+    parser = argparse.ArgumentParser(description='Python Ray Tracer')
+    parser.add_argument('scene_file', type=str, help='Path to the scene file')
+    parser.add_argument('output_image', type=str, help='Name of the output image file')
+    parser.add_argument('--width', type=int, default=500, help='Image width')
+    parser.add_argument('--height', type=int, default=500, help='Image height')
+    args = parser.parse_args()
 
-    return np.clip(color, 0, 1)
+    # Parse the scene file
+    camera, scene_settings, objects = parse_scene_file(args.scene_file)
+    materials = [o for o in objects if isinstance(o, Material)]
+    lights = [o for o in objects if isinstance(o, Light)]
+    physical_objects = [o for o in objects if not isinstance(o, (Light, Material))]
 
-def is_light_blocked(origin, direction, scene_objects):
-    obj, inter, normal = get_ray_first_collision((origin, direction), scene_objects)
-    return inter is not None
+    # TODO: Implement the ray tracer
+    direction, right_vector, up_vector, screen_height, center_screen = initialize_screen_parameters(camera, args.width,
+                                                                                                    args.height)
+    # Compute all pixel positions on the screen
+    pixels = compute_screen_pixels(direction, camera, args.height, args.width,
+                                                                 screen_height, right_vector, up_vector, center_screen)
 
-def compute_soft_shadows(intersection_point, light, scene_objects):
-    num_rays = 10
-    hit_count = 0
+    # Initialize the image array
+    image_array = np.zeros((args.height, args.width, 3))
+    rev = len(image_array[0])-1
+    # Loop over each pixel
+    for i in range(args.height):
+        print(i)
+        for j in range(args.width):
+            # Get the pixel position
+            pixel_position = pixels[i, j]
 
-    for _ in range(num_rays):
-        random_offset = light.radius * (np.random.rand(3) - 0.5)
-        random_light_position = light.position + random_offset
+            # Construct a ray from the camera through that pixel
+            ray = compute_ray(camera.position, pixel_position)
 
-        shadow_ray_direction = random_light_position - intersection_point
-        shadow_ray_distance = np.linalg.norm(shadow_ray_direction)
-        shadow_ray_direction /= shadow_ray_distance
+            # Check the intersection of the ray with all surfaces in the scene
+            obj, intersection_point, normal = get_ray_first_collision(ray, physical_objects)
 
-        if not is_light_blocked(intersection_point, shadow_ray_direction, scene_objects):
-            hit_count += 1
+            if obj is None:
+                # No intersection: set the background color
+                image_array[i, j] = scene_settings.background_color
+                continue
+            obj_material = materials[obj.material_index -1]
+            # Compute the color of the surface
+            color = calculate_shading(ray, intersection_point, normal,obj, obj_material, lights, physical_objects, scene_settings)
 
-    return hit_count / num_rays
+            # Add reflection color
+            if np.linalg.norm(obj_material.reflection_color) > 0:
+                reflection_color = calculate_reflection(
+                    ray=ray,
+                    hit_point=intersection_point,
+                    hit_normal=normal,
+                    hit_object= obj,
+                    objects=physical_objects,
+                    materials=materials,
+                    lights = lights,
+                    recursion_depth=1,
+                    scene_settings=scene_settings
+                )
+                color += reflection_color
 
+            # Assign the calculated color to the pixel
+            image_array[i, rev -j] = np.clip(color,0,1)
+
+
+    image_array = (image_array * 255).astype(np.uint8)
+    # Save the output image
+    save_image(image_array)
+
+
+if __name__ == '__main__':
+    main()
