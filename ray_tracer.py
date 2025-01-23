@@ -146,55 +146,6 @@ def compute_ray_InfinitePlane_intersection(ray, plane):
 
     return intersection_point, t, plane.normal
 
-# def compute_ray_cube_intersection(ray, cube, epsilon=1e-15):
-#     # Calculate the bounds of the cube
-#     half_scale = cube.scale / 2
-#
-#     # Calculate the bounds of the cube
-#     bounds_min = cube.position - half_scale
-#     bounds_max = cube.position + half_scale
-#
-#     # Initialize t_min and t_max
-#     t_min = -float('inf')  # Start with the lowest possible value
-#     t_max = float('inf')   # Start with the highest possible value
-#
-#     # Check intersection for each axis
-#     for i in range(3):
-#         if abs(ray[1][i]) < epsilon:  # Ray is parallel to the plane
-#             if ray[0][i] < bounds_min[i] or ray[0][i] > bounds_max[i]:
-#                 return None, None, None  # Ray misses the box
-#         else:
-#             # Calculate intersection times for the two planes of the slab
-#             t1 = (bounds_min[i] - ray[0][i]) / ray[1][i]
-#             t2 = (bounds_max[i] - ray[0][i]) / ray[1][i]
-#
-#             # Ensure t1 is the entry point and t2 is the exit point
-#             t_entry = min(t1, t2)
-#             t_exit = max(t1, t2)
-#
-#             # Update the overall t_min and t_max
-#             t_min = max(t_min, t_entry)
-#             t_max = min(t_max, t_exit)
-#
-#             # If the intervals don't overlap, there is no intersection
-#             if t_min > t_max:
-#                 return None, None, None
-#
-#     # Compute the intersection point and normal
-#     intersection_point = ray[0] + t_min * ray[1]
-#
-#     # Compute the normal of the face hit
-#     normal = np.zeros(3)
-#     for i in range(3):
-#         if abs(intersection_point[i] - bounds_min[i]) < epsilon:
-#             normal[i] = -1
-#         elif abs(intersection_point[i] - bounds_max[i]) < epsilon:
-#             normal[i] = 1
-#
-#     # Normalize the normal to ensure stability
-#     normal /= np.linalg.norm(normal)
-#     return intersection_point, t_min, normal
-
 
 
 def compute_ray_cube_intersection(ray: List[np.ndarray], cube: 'Cube') -> Tuple[
@@ -210,16 +161,33 @@ def compute_ray_cube_intersection(ray: List[np.ndarray], cube: 'Cube') -> Tuple[
     min_bound = cube.position - half_scale
     max_bound = cube.position + half_scale
 
-    # Handle division by zero in ray direction components
-    dir_inv = np.where(
-        np.abs(ray_direction) < 1e-10,
-        np.inf,
-        1.0 / ray_direction
-    )
+    # Calculate inverses and handle division by zero atomically
+    dir_inv = np.zeros_like(ray_direction)
+    mask = np.abs(ray_direction) > 1e-10
+    dir_inv[mask] = 1.0 / ray_direction[mask]
+    # Components where ray_direction is effectively zero remain zero in dir_inv
 
     # Calculate intersection with all slabs
     t1 = (min_bound - ray_origin) * dir_inv
     t2 = (max_bound - ray_origin) * dir_inv
+
+    # For directions close to zero, set appropriate t values
+    # If ray origin is inside the slab, use -inf and inf
+    # If ray origin is before the slab, use inf for both
+    # If ray origin is after the slab, use -inf for both
+    zero_dirs = ~mask
+    if np.any(zero_dirs):
+        for i in np.where(zero_dirs)[0]:
+            if min_bound[i] <= ray_origin[i] <= max_bound[i]:
+                t1[i] = -np.inf
+                t2[i] = np.inf
+            else:
+                if ray_origin[i] < min_bound[i]:
+                    t1[i] = np.inf
+                    t2[i] = np.inf
+                else:  # ray_origin[i] > max_bound[i]
+                    t1[i] = -np.inf
+                    t2[i] = -np.inf
 
     # Get entry and exit points
     t_min = np.minimum(t1, t2)
@@ -256,6 +224,68 @@ def compute_ray_cube_intersection(ray: List[np.ndarray], cube: 'Cube') -> Tuple[
     normal = normal / np.linalg.norm(normal)
 
     return intersection_point, t_hit, normal
+
+
+#
+# def compute_ray_cube_intersection(ray: List[np.ndarray], cube: 'Cube') -> Tuple[
+#     Optional[np.ndarray], Optional[float], Optional[np.ndarray]]:
+#
+#     ray_origin, ray_direction = ray
+#
+#     # Ensure ray direction is normalized
+#     ray_direction = ray_direction / np.linalg.norm(ray_direction)
+#
+#     # Calculate cube bounds
+#     half_scale = cube.scale / 2
+#     min_bound = cube.position - half_scale
+#     max_bound = cube.position + half_scale
+#
+#     # Handle division by zero in ray direction components
+#     dir_inv = np.where(
+#         np.abs(ray_direction) < 1e-10,
+#         np.inf,
+#         1.0 / ray_direction
+#     )
+#
+#     # Calculate intersection with all slabs
+#     t1 = (min_bound - ray_origin) * dir_inv
+#     t2 = (max_bound - ray_origin) * dir_inv
+#
+#     # Get entry and exit points
+#     t_min = np.minimum(t1, t2)
+#     t_max = np.maximum(t1, t2)
+#
+#     # Find the largest entry and smallest exit
+#     t_near = np.max(t_min)
+#     t_far = np.min(t_max)
+#
+#     # Check if there's a valid intersection
+#     if t_near > t_far or t_far < 0:
+#         return None, None, None
+#
+#     # If t_near is negative, ray starts inside cube
+#     t_hit = t_near if t_near >= 0 else t_far
+#
+#     # Calculate intersection point
+#     intersection_point = ray_origin + ray_direction * t_hit
+#
+#     # Calculate normal (using the face that was hit)
+#     eps = 1e-10  # Small epsilon for numerical stability
+#     normal = np.zeros(3)
+#
+#     # Find which face was hit by comparing intersection point with bounds
+#     for i in range(3):
+#         if abs(intersection_point[i] - min_bound[i]) < eps:
+#             normal[i] = -1
+#             break
+#         elif abs(intersection_point[i] - max_bound[i]) < eps:
+#             normal[i] = 1
+#             break
+#
+#     # Ensure normal is normalized
+#     normal = normal / np.linalg.norm(normal)
+#
+#     return intersection_point, t_hit, normal
 
 
 def compute_ray_Sphere_intersection(ray, sphere, epsilon=1e-5):
