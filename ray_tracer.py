@@ -146,8 +146,6 @@ def compute_ray_InfinitePlane_intersection(ray, plane):
 
     return intersection_point, t, plane.normal
 
-
-
 def compute_ray_cube_intersection(ray: List[np.ndarray], cube: 'Cube') -> Tuple[
     Optional[np.ndarray], Optional[float], Optional[np.ndarray]]:
 
@@ -226,68 +224,6 @@ def compute_ray_cube_intersection(ray: List[np.ndarray], cube: 'Cube') -> Tuple[
     return intersection_point, t_hit, normal
 
 
-#
-# def compute_ray_cube_intersection(ray: List[np.ndarray], cube: 'Cube') -> Tuple[
-#     Optional[np.ndarray], Optional[float], Optional[np.ndarray]]:
-#
-#     ray_origin, ray_direction = ray
-#
-#     # Ensure ray direction is normalized
-#     ray_direction = ray_direction / np.linalg.norm(ray_direction)
-#
-#     # Calculate cube bounds
-#     half_scale = cube.scale / 2
-#     min_bound = cube.position - half_scale
-#     max_bound = cube.position + half_scale
-#
-#     # Handle division by zero in ray direction components
-#     dir_inv = np.where(
-#         np.abs(ray_direction) < 1e-10,
-#         np.inf,
-#         1.0 / ray_direction
-#     )
-#
-#     # Calculate intersection with all slabs
-#     t1 = (min_bound - ray_origin) * dir_inv
-#     t2 = (max_bound - ray_origin) * dir_inv
-#
-#     # Get entry and exit points
-#     t_min = np.minimum(t1, t2)
-#     t_max = np.maximum(t1, t2)
-#
-#     # Find the largest entry and smallest exit
-#     t_near = np.max(t_min)
-#     t_far = np.min(t_max)
-#
-#     # Check if there's a valid intersection
-#     if t_near > t_far or t_far < 0:
-#         return None, None, None
-#
-#     # If t_near is negative, ray starts inside cube
-#     t_hit = t_near if t_near >= 0 else t_far
-#
-#     # Calculate intersection point
-#     intersection_point = ray_origin + ray_direction * t_hit
-#
-#     # Calculate normal (using the face that was hit)
-#     eps = 1e-10  # Small epsilon for numerical stability
-#     normal = np.zeros(3)
-#
-#     # Find which face was hit by comparing intersection point with bounds
-#     for i in range(3):
-#         if abs(intersection_point[i] - min_bound[i]) < eps:
-#             normal[i] = -1
-#             break
-#         elif abs(intersection_point[i] - max_bound[i]) < eps:
-#             normal[i] = 1
-#             break
-#
-#     # Ensure normal is normalized
-#     normal = normal / np.linalg.norm(normal)
-#
-#     return intersection_point, t_hit, normal
-
-
 def compute_ray_Sphere_intersection(ray, sphere, epsilon=1e-5):
     ray_origin = ray[0]
     ray_direction = ray[1]
@@ -350,54 +286,25 @@ def get_ray_first_collision(ray, objects):
 
     return obj, inter, normal
 
+def get_ray_all_collisions(ray, objects):
+    collisions = []
 
-# def soft_shadows(light, intersection_point, objects, shadow_ray, intersected_obj, sh_rays, epsilon=1e-15):
-#     N = int(sh_rays)  # Number of shadow rays (total rays: N^2)
-#     total_rays = N * N
-#
-#     # Calculate the direction of the main light ray
-#     light_direction = shadow_ray[1]
-#     light_direction /= np.linalg.norm(light_direction)
-#
-#     # Compute perpendicular vectors to the light direction
-#     up_candidate = np.array([0, 1, 0]) if not np.allclose(light_direction, [0, 1, 0]) else np.array([1, 0, 0])
-#     right_vector = np.cross(light_direction, up_candidate)
-#     right_vector /= np.linalg.norm(right_vector)
-#     up_vector = np.cross(right_vector, light_direction)
-#
-#     # Calculate the size of each grid cell
-#     cell_size = (2 * light.radius) / N  # Size of each grid cell (full radius)
-#     rays_hit = 0
-#
-#     for i in range(N):
-#         for j in range(N):
-#             # Define the current grid cell boundaries
-#             cell_min_x = -light.radius + i * cell_size
-#             cell_min_y = -light.radius + j * cell_size
-#             cell_max_x = cell_min_x + cell_size
-#             cell_max_y = cell_min_y + cell_size
-#
-#             # Select a random point within the current grid cell
-#             random_x = np.random.uniform(cell_min_x, cell_max_x)
-#             random_y = np.random.uniform(cell_min_y, cell_max_y)
-#             random_offset = random_x * right_vector + random_y * up_vector
-#
-#             # Compute the sample point on the light
-#             light_sample_point = light.position + random_offset
-#
-#             # Create a ray from the sample point on the light to the intersection point
-#             sample_ray = compute_ray(light_sample_point, intersection_point)
-#
-#             # Check for occlusion
-#             blocking_obj, blocking_point, _ = get_ray_first_collision(sample_ray, objects)
-#             if blocking_obj is None or (
-#                 blocking_obj is intersected_obj and np.linalg.norm(blocking_point - intersection_point) < epsilon
-#             ):
-#                 rays_hit += 1
-#
-#     # Compute the final light intensity
-#     light_intensity = (1 - light.shadow_intensity) + light.shadow_intensity * (rays_hit / total_rays)
-#     return light_intensity
+    for obj in objects:
+        if isinstance(obj, Cube) or isinstance(obj, Sphere) or isinstance(obj, InfinitePlane):
+            cur_inter, cur_dis, cur_normal = compute_ray_object_intersection(ray, obj)
+            if cur_inter is not None:
+                collisions.append((obj, cur_dis, cur_inter, cur_normal))
+
+    # Sort collisions by distance (ascending)
+    collisions.sort(key=lambda x: x[1])
+
+    return collisions
+
+
+def color_normalizer(final_color, max_value=1.0):
+    max_component = max(max_value, np.max(final_color))
+    return np.clip(final_color / max_component, 0, max_value)
+
 def soft_shadows(light, intersection_point, objects, shadow_ray, intersected_obj, sh_rays, epsilon=1e-10):
     N = int(sh_rays)   # Number of shadow rays (N^2 total rays)
     total_rays = N * N
@@ -447,74 +354,84 @@ def soft_shadows(light, intersection_point, objects, shadow_ray, intersected_obj
     return light_intensity
 
 
-def calculate_reflection(ray, hit_point, hit_normal, hit_object, objects, materials, lights, recursion_depth, scene_settings):
+def calculate_reflection(
+        ray,
+        hit_point,
+        hit_normal,
+        hit_object,
+        objects,
+        materials,
+        lights,
+        recursion_depth,
+        scene_settings
+):
     material = materials[hit_object.material_index - 1]
-    # If we have reached maximum depth or there is no reflection
-    if recursion_depth >= scene_settings.max_recursions or np.linalg.norm(material.reflection_color) == 0:
-        return calculate_shading(ray, hit_point, hit_normal, hit_object, material, lights, objects, scene_settings)
-    # Calculating the direction of the reflected beam
+
+    # Early termination conditions
+    if (
+            recursion_depth >= scene_settings.max_recursions or
+            np.linalg.norm(material.reflection_color) < 1e-4
+    ):
+        return calculate_shading(
+            ray,
+            hit_point,
+            hit_normal,
+            hit_object,
+            material,
+            lights,
+            objects,
+            scene_settings
+        ) * material.reflection_color
+
+    # Calculate reflection ray with small offset
     reflection_direction = ray[1] - 2 * np.dot(ray[1], hit_normal) * hit_normal
     reflection_direction /= np.linalg.norm(reflection_direction)
-    reflection_ray = [hit_point + 1e-5 * reflection_direction, reflection_direction]
-    if isinstance(hit_object, Cube):
-        print(f"Hit_object {hit_object}: Normal: {hit_normal}, Intersection_point: {hit_point},Ray origin:{ray[0]}, Ray direction: {ray[1]}, Reflection direction: {reflection_direction} ")
-    # Collision check on new object
+
+    # Slight offset to prevent self-intersection
+    epsilon = 1e-4
+    reflection_ray = [
+        hit_point + epsilon * reflection_direction,
+        reflection_direction
+    ]
+
+    # Collision detection
     obj, next_point, next_normal = get_ray_first_collision(reflection_ray, objects)
-    # If there is no hit, return background color
+
+    # No hit scenario
     if obj is None:
         return scene_settings.background_color * material.reflection_color
 
-    # Recursive call for the next object
+    # Recursive reflection with controlled depth
+    next_material = materials[obj.material_index - 1]
+
+    # Compute reflection and shading components
     reflected_color = calculate_reflection(
-        reflection_ray, next_point, next_normal, obj, objects, materials, lights, recursion_depth + 1, scene_settings
+        reflection_ray,
+        next_point,
+        next_normal,
+        obj,
+        objects,
+        materials,
+        lights,
+        recursion_depth + 1,
+        scene_settings
     )
 
-    # Calculate the shading color for the current object
-    shading_color = calculate_shading(ray, next_point, next_normal, obj, materials[obj.material_index - 1], lights, objects, scene_settings)
+    shading_color = calculate_shading(
+        reflection_ray,
+        next_point,
+        next_normal,
+        obj,
+        next_material,
+        lights,
+        objects,
+        scene_settings
+    )
 
-    # Color combination
+    # Combine colors with reflection coefficient
     final_color = (shading_color + reflected_color) * material.reflection_color
 
-    max_component = max(1, np.max(final_color))
-    final_color = final_color / max_component
-
-    return np.clip(final_color,0,1)
-
-
-
-# def calculate_reflection_work(ray, intersection_point, normal, object, objects, materials, lights,
-#                          recursion_depth, scene_settings):
-#     material = materials[object.material_index - 1]
-#
-#     if recursion_depth >= scene_settings.max_recursions:
-#         return np.zeros(3)  # Stop recursion if max depth is reached
-#
-#
-#     # Calculate the direction of the reflection ray
-#     reflection_direction = ray[1] - 2 * np.dot(ray[1], normal) * normal
-#     reflection_direction /= np.linalg.norm(reflection_direction)  # Normalize the reflection direction
-#
-#     # Generate the reflection ray
-#     reflection_ray = [intersection_point + 1e-5 * reflection_direction, reflection_direction]
-#
-#     # Check for the next object the reflection ray hits
-#     next_obj, next_point, next_normal = get_ray_first_collision(reflection_ray, objects)
-#
-#     if next_obj is None:
-#         # If no object is hit, use the background color
-#         return scene_settings.background_color * material.reflection_color
-#     else:
-#         # Compute reflection recursively
-#         # Add shading from the new intersection
-#         shading_color = calculate_shading(ray, next_point, next_normal, next_obj, material, lights, objects,
-#                                           scene_settings)
-#         reflection_color = calculate_reflection(
-#             reflection_ray, next_point, next_normal, next_obj, objects, materials, lights,
-#             recursion_depth + 1, scene_settings
-#         )
-#
-#     # Multiply the reflection color by the material's reflection coefficient
-#     return reflection_color * material.reflection_color
+    return color_normalizer(final_color)
 
 def calculate_shading(ray, intersection_point, normal, obj, obj_material, lights, objects, scene_settings):
     # Initialize the final color as black
@@ -525,12 +442,12 @@ def calculate_shading(ray, intersection_point, normal, obj, obj_material, lights
     for light in lights:
         # Compute the ray from the intersection point to the light
         shadow_ray = compute_ray(intersection_point, light.position)
+        light_direction = shadow_ray[1]  # Normalized direction of the ray
 
         # Calculate the light intensity at the intersection point using soft_shadows
         light_intensity = soft_shadows(light, intersection_point, objects, shadow_ray, obj, scene_settings.root_number_shadow_rays)
 
         # Compute diffuse lighting
-        light_direction = shadow_ray[1]  # Normalized direction of the ray
         diffuse_intensity = max(0, np.dot(normal, light_direction))
         diffuse_color = diffuse_intensity * np.array(light.color) * np.array(obj_material.diffuse_color)
 
@@ -542,9 +459,8 @@ def calculate_shading(ray, intersection_point, normal, obj, obj_material, lights
         # Accumulate the lighting contributions
         final_color += light_intensity * (diffuse_color + specular_color)
 
-
     # Ensure values are within range [0, 1]
-    return final_color
+    return np.clip(final_color, 0, 1)
 
 #############################################
 
@@ -609,7 +525,7 @@ def main():
                 color += reflection_color
 
             # Assign the calculated color to the pixel
-            image_array[i, rev -j] = np.clip(color,0,1)
+            image_array[i, rev -j] = np.clip(color, 0, 1)
 
 
     image_array = (image_array * 255).astype(np.uint8)
